@@ -88,6 +88,10 @@ def _product_type_matches(product: Dict[str, Any], requested: str, query_text: s
         return actual in {'heels', 'heeled sandals', 'pumps', 'wedge'} or any(
             word in text for word in ('heel', 'pump')
         )
+    if requested == 'suit':
+        if actual in {'bodysuit', 'swimsuit', 'pyjama jumpsuit/playsuit', 'underwear body', 'dungarees', 'jumpsuit/playsuit'}:
+            return False
+        return actual in {'blazer', 'suit', 'jacket', 'trousers', 'costumes'} or any(word in text for word in ('blazer', 'suit', 'tailored', 'tuxedo'))
     if requested == 'dress' and actual in {'underdress', 'underwear body'}:
         return False
     return actual == requested or bool(re.search(r'(?<![a-z0-9])' + re.escape(requested) + r'(?![a-z0-9])', text))
@@ -294,25 +298,21 @@ def search_and_rank(
 
     if parsed_query.intent_type == 'mixed' and len(parsed_query.sub_queries) >= 2:
         ranked_choices = []
+        choice_lists = []
         for choice_text in parsed_query.sub_queries:
             _, choice_max = extract_budget(choice_text)
-            ranked_choices.append(retrieve_candidates_for_text(index, choice_text, parsed_query, filters, choice_max))
+            c_ranked = retrieve_candidates_for_text(index, choice_text, parsed_query, filters, choice_max)
+            ranked_choices.append(c_ranked)
+            choice_lists.append([doc_idx for doc_idx, _ in c_ranked])
 
-        c1_ranked = ranked_choices[0]
-        c2_ranked = ranked_choices[1]
-
-        for doc_idx, s in c1_ranked:
-            scores_by_idx[doc_idx] = max(scores_by_idx.get(doc_idx, 0.0), s)
-        for doc_idx, s in c2_ranked:
-            scores_by_idx[doc_idx] = max(scores_by_idx.get(doc_idx, 0.0), s)
+        for c_ranked in ranked_choices:
+            for doc_idx, s in c_ranked:
+                scores_by_idx[doc_idx] = max(scores_by_idx.get(doc_idx, 0.0), s)
 
         seen = set()
-        c1_list = [doc_idx for doc_idx, _ in c1_ranked]
-        c2_list = [doc_idx for doc_idx, _ in c2_ranked]
-
-        max_len = max(len(values) for values in (c1_list, c2_list))
+        max_len = max((len(cl) for cl in choice_lists), default=0)
         for i in range(max_len):
-            for choice_list in (c1_list, c2_list):
+            for choice_list in choice_lists:
                 if i < len(choice_list) and choice_list[i] not in seen:
                     ordered_indices.append(choice_list[i])
                     seen.add(choice_list[i])

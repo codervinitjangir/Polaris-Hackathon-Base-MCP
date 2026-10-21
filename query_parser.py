@@ -209,32 +209,30 @@ def parse_query(raw_query: Optional[str]) -> ParsedQuery:
     # Mixed choice pattern check (only if not complementary)
     # e.g. "Black jeans and white T-shirts under INR 2000 each"
     if intent_type == 'single':
-        mixed_match = re.match(
-            r'^(?:both\s+)?(?P<c1>.+?)\s+(?:and|as\s+well\s+as|together\s+with|or)\s+(?P<c2>.+?)(?:\s+(?:under|below|less\s+than|cheaper\s+than|budget)\s+[^\s]+(?:\s+each)?)?$',
-            query,
-            re.I
-        )
-        if mixed_match:
-            c1 = mixed_match.group('c1').strip()
-            c2 = mixed_match.group('c2').strip()
-            # Clean any trailing 'under ...' from c2
-            c2_clean = re.sub(r'\s+(?:under|below|less\s+than|cheaper\s+than|budget)\s+.*$', '', c2, flags=re.I).strip()
-            if has_fashion_noun(c1) and has_fashion_noun(c2_clean):
-                intent_type = 'mixed'
-                sub_parts = [c1, c2_clean]
+        cleaned = query.strip()
+        cleaned = re.sub(r'^(?:both|either|looking\s+for|show\s+me)\s+', '', cleaned, flags=re.I).strip()
+        cleaned = re.sub(r'\s+(?:under|below|less\s+than|cheaper\s+than|budget(?:\s+of)?|within|upto|up\s+to)\s+.*$', '', cleaned, flags=re.I).strip()
+        raw_parts = re.split(r'[,;]|\s+(?:and|or|plus|as\s+well\s+as|together\s+with)\s+', cleaned, flags=re.I)
+        parts = [p.strip() for p in raw_parts if p.strip()]
+        valid_parts = [p for p in parts if has_fashion_noun(p)]
+        if len(valid_parts) >= 2 and len(valid_parts) == len(parts):
+            intent_type = 'mixed'
+            sub_parts = valid_parts
 
     # 3. Extract Global budgets and facet mentions.  Explicit filters are
     # applied later and intentionally outrank these soft query hints.
     min_p, max_p = extract_budget(primary_part if intent_type == 'complementary' else query)
 
     # 4. Extract Colors
-    detected_colors = _find_aliases(recognition_text, COLOR_SYNONYMS)
+    primary_color_text = primary_part if intent_type == 'complementary' else recognition_text
+    detected_colors = _find_aliases(primary_color_text, COLOR_SYNONYMS)
 
     # 5. Extract Audiences
     detected_audiences = _find_aliases(recognition_text, AUDIENCE_SYNONYMS)
 
     # 6. Extract Product Types
-    detected_types = _find_aliases(recognition_text, PRODUCT_TYPE_SYNONYMS)
+    primary_type_text = primary_part if intent_type == 'complementary' else recognition_text
+    detected_types = _find_aliases(primary_type_text, PRODUCT_TYPE_SYNONYMS)
 
     accessory_colors = _find_aliases(accessory_part, COLOR_SYNONYMS) if accessory_part else []
     accessory_types = _find_aliases(accessory_part, PRODUCT_TYPE_SYNONYMS) if accessory_part else []
