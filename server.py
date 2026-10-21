@@ -35,7 +35,7 @@ async def call_tool(name, arguments):
 
 
 raw_hosts = [h.strip() for h in os.getenv('MCP_ALLOWED_HOSTS',
-    'localhost:*,127.0.0.1:*,[::1]:*,*').split(',') if h.strip()]
+    'localhost:*,127.0.0.1:*,[::1]:*,dummy-mcp.01m5erq7wn81nf6mhfpqkjb0ka.apps.springwinter.dev,dummy-mcp.01m5erq7wn81nf6mhfpqkjb0ka.apps.springwinter.dev:*,*').split(',') if h.strip()]
 allow_all = '*' in raw_hosts or os.getenv('MCP_ENABLE_DNS_REBINDING', '0').lower() in ('0', 'false', 'no')
 
 security = TransportSecuritySettings(

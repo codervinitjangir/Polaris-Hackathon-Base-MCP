@@ -30,10 +30,10 @@ fi
 
 if [ -z "$PUBLIC_IP" ]; then
     echo "⚠️  Could not auto-detect public IP. Using wildcard for allowed hosts."
-    ALLOWED_HOSTS="localhost:*,127.0.0.1:*,*"
+    ALLOWED_HOSTS="localhost:*,127.0.0.1:*,dummy-mcp.01m5erq7wn81nf6mhfpqkjb0ka.apps.springwinter.dev,dummy-mcp.01m5erq7wn81nf6mhfpqkjb0ka.apps.springwinter.dev:*,*"
 else
     echo "✅ Target Public IP: $PUBLIC_IP"
-    ALLOWED_HOSTS="localhost:*,127.0.0.1:*,${PUBLIC_IP}:*,${PUBLIC_IP}"
+    ALLOWED_HOSTS="localhost:*,127.0.0.1:*,dummy-mcp.01m5erq7wn81nf6mhfpqkjb0ka.apps.springwinter.dev,dummy-mcp.01m5erq7wn81nf6mhfpqkjb0ka.apps.springwinter.dev:*,${PUBLIC_IP}:*,${PUBLIC_IP},*"
 fi
 
 # 2. Check and Install Docker if missing
