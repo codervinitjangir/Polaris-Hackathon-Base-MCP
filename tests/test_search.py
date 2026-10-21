@@ -1,5 +1,6 @@
 import unittest
 from search import Catalog
+from query_parser import extract_budget, parse_query
 
 
 def product(id, price, rating, count, color='Black', name='Cotton top', description='Soft jersey'):
@@ -47,6 +48,19 @@ class SearchTests(unittest.TestCase):
                      {'filters':{'min_price':float('nan')}}, {'filters':{'min_price':float('inf')}}]:
             with self.subTest(args=args), self.assertRaises(ValueError):
                 self.catalog.search(args)
+
+    def test_natural_language_budget_and_typo_parsing(self):
+        self.assertEqual(extract_budget('under INR 2,000'), (None, 2000.0))
+        self.assertEqual(extract_budget('between 1000 and 2k'), (1000.0, 2000.0))
+        parsed = parse_query('white dres under 2k')
+        self.assertEqual(parsed.product_types, ['Dress'])
+        self.assertEqual(parsed.colors, ['White'])
+        self.assertEqual(parsed.price_max, 2000.0)
+
+    def test_mixed_choices_keep_both_intents_in_shared_page(self):
+        ids = self.ids(query='black skirts and white tops', limit=10)
+        self.assertIn('004', ids)
+        self.assertIn('003', ids)
 
 
 if __name__ == '__main__': unittest.main()

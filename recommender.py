@@ -2,7 +2,7 @@
 import re
 from typing import Any, Dict, List, Optional, Set
 
-from constants import COMPLEMENTARY_GRAPH, PRODUCT_TYPE_SYNONYMS
+from constants import COMPLEMENTARY_GRAPH
 from indexing import CatalogIndex
 from query_parser import ParsedQuery
 
@@ -29,6 +29,40 @@ def is_audience_compatible(primary_aud: Optional[str], candidate_aud: Optional[s
     return True
 
 
+def query_audience_compatible(audiences: List[str], candidate_aud: Optional[str]) -> bool:
+    """Apply an unqualified audience requirement to recommendations too."""
+    if not audiences or not candidate_aud:
+        return True
+    actual = candidate_aud.casefold()
+    for audience in audiences:
+        wanted = audience.casefold()
+        if actual == wanted:
+            return True
+        if wanted == 'ladieswear' and ('ladies' in actual or actual == 'divided'):
+            return True
+        if wanted == 'menswear' and ('mens' in actual or actual == 'divided'):
+            return True
+        if wanted.startswith('children') and 'children' in actual:
+            return True
+        if wanted.startswith('baby') and 'baby' in actual:
+            return True
+    return False
+
+
+def candidate_indices_for_type(index: CatalogIndex, requested: str) -> Set[int]:
+    """Expand broad accessory types to their catalog variants."""
+    wanted = requested.casefold()
+    if wanted == 'bag':
+        variants = ('bag', 'shoulder bag', 'cross-body bag', 'tote bag', 'weekend/gym bag', 'bumbag')
+        result: Set[int] = set()
+        for variant in variants:
+            result.update(index.attr_sets['product_type'].get(variant, set()))
+        return result
+    if wanted == 'sneakers':
+        return set(index.attr_sets['product_type'].get('sneakers', set()))
+    return set(index.attr_sets['product_type'].get(wanted, set()))
+
+
 def recommend_complements(
     index: CatalogIndex,
     primary_results: List[Dict[str, str]],
@@ -47,13 +81,9 @@ def recommend_complements(
     recommendations: List[Dict[str, str]] = []
 
     # Check if query specifically requested an accessory / complement
-    target_accessory_types = []
-    if parsed_query.accessory_query:
-        for syn, canon in PRODUCT_TYPE_SYNONYMS.items():
-            if re.search(r'\b' + re.escape(syn) + r'\b', parsed_query.accessory_query.lower()):
-                if canon not in target_accessory_types:
-                    target_accessory_types.append(canon)
+    target_accessory_types = list(parsed_query.accessory_product_types)
 
+    acc_min_budget = parsed_query.accessory_price_min
     acc_budget = parsed_query.accessory_price_max
 
     # Iterate through primary products on this page to find matching complements
@@ -73,7 +103,7 @@ def recommend_complements(
         if target_accessory_types:
             complement_types = target_accessory_types
         else:
-            complement_types = COMPLEMENTARY_GRAPH.get(ptype, [])
+            complement_types = COMPLEMENTARY_GRAPH.get(ptype or '', [])
             if not complement_types and category:
                 complement_types = COMPLEMENTARY_GRAPH.get(category, ['Bag', 'Sneakers', 'Sunglasses', 'Belt'])
 
@@ -83,7 +113,7 @@ def recommend_complements(
         # Score candidate complements from the catalog
         scored_candidates = []
         for cand_type in complement_types:
-            cand_indices = index.attr_sets['product_type'].get(cand_type.strip().casefold(), set())
+            cand_indices = candidate_indices_for_type(index, cand_type)
             for c_idx in cand_indices:
                 cand_p = index.products[c_idx]
                 cand_id = cand_p['id']
@@ -99,9 +129,18 @@ def recommend_complements(
                 price = index.prices[c_idx]
                 if acc_budget is not None and price > acc_budget:
                     continue
+                if acc_min_budget is not None and price < acc_min_budget:
+                    continue
 
                 # Check audience compatibility
                 if not is_audience_compatible(audience, cand_p.get('audience')):
+                    continue
+                if not query_audience_compatible(parsed_query.audiences, cand_p.get('audience')):
+                    continue
+
+                # A constraint written specifically for the accompanying
+                # item is hard, just like a primary query constraint.
+                if parsed_query.accessory_colors and cand_p.get('color') not in parsed_query.accessory_colors:
                     continue
 
                 # Score complement suitability
@@ -123,6 +162,8 @@ def recommend_complements(
                 # Budget proximity (good value)
                 if acc_budget is not None:
                     score += max(0.0, 5.0 - (acc_budget - price) / max(1.0, acc_budget) * 2.0)
+                if parsed_query.accessory_colors and cand_color in parsed_query.accessory_colors:
+                    score += 8.0
 
                 scored_candidates.append((c_idx, score))
 

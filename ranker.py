@@ -4,11 +4,32 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from constants import COLOR_SYNONYMS, PRODUCT_TYPE_SYNONYMS
+from constants import COLOR_SYNONYMS, CONCEPT_EXPANSIONS, PRODUCT_TYPE_SYNONYMS
 from indexing import CatalogIndex
-from query_parser import FASHION_NOUNS, ParsedQuery, parse_query
+from query_parser import (
+    FASHION_NOUNS,
+    ParsedQuery,
+    _expanded_query_tokens,
+    _find_aliases,
+    _fuzzy_aliases,
+    extract_budget,
+)
 
 WORD_RE = re.compile(r'[a-z0-9]+')
+STOPWORDS = {
+    'a', 'an', 'and', 'as', 'at', 'by', 'each', 'for', 'from', 'in', 'me',
+    'of', 'on', 'or', 'please', 'some', 'the', 'to', 'under', 'with', 'within',
+    'something', 'looking', 'want', 'need', 'find', 'show', 'get', 'my',
+    'comfortable', 'lazy', 'sunday', 'retro', 'futuristic', 'cyberpunk',
+    'outfit', 'festival', 'wear', 'breathes', 'gothic', 'wedding', 'guest',
+    'cozy', 'rainy', 'afternoon', 'loungewear',
+}
+NON_APPAREL_TYPES = {
+    'dog wear', 'soft toys', 'toy', 'cushion', 'side table', 'marker pen',
+    'mobile case', 'wireless earphone case', 'waterbottle', 'giftbox',
+    'wood balls', 'sewing kit', 'stain remover spray', 'chem. cosmetics',
+    'fine cosmetics', 'clothing mist',
+}
 
 
 def get_token_variations(token: str) -> List[str]:
@@ -16,6 +37,8 @@ def get_token_variations(token: str) -> List[str]:
     variations = [token]
     if token.endswith('s') and len(token) > 3:
         variations.append(token[:-1])
+    if token.endswith('ies') and len(token) > 4:
+        variations.append(token[:-3] + 'y')
     if token.endswith('es') and len(token) > 4:
         variations.append(token[:-2])
     if not token.endswith('s'):
@@ -29,6 +52,64 @@ def get_token_variations(token: str) -> List[str]:
     return list(dict.fromkeys(variations))
 
 
+def _product_type_matches(product: Dict[str, Any], requested: str, query_text: str) -> bool:
+    """Match a requested shopping type against the catalog taxonomy.
+
+    The catalog uses a few broad types (for example ``Trousers`` for jeans)
+    and a few families (for example several bag variants).  Matching those
+    families here is more reliable than requiring the user's exact word to be
+    present in the product name.
+    """
+    actual = str(product.get('product_type') or '').casefold()
+    requested = requested.casefold()
+    if actual == requested:
+        return True
+
+    text = ' '.join(str(product.get(k) or '') for k in ('name', 'product_type', 'description')).casefold()
+    if requested == 'trousers':
+        return actual in {'trousers', 'outdoor trousers'} or any(
+            word in text for word in ('jean', 'denim', 'trouser', 'pants', 'chino', 'jogger')
+        )
+    if requested == 'top':
+        return actual in {'top', 'vest top', 'bodysuit'} or any(
+            word in text for word in (' top', 'tops', 'blouse', 'camisole')
+        )
+    if requested == 'bag':
+        return actual in {'bag', 'shoulder bag', 'cross-body bag', 'tote bag', 'weekend/gym bag', 'bumbag'}
+    if requested == 'sneakers' and 'shoe' in query_text.lower():
+        return product.get('category') == 'Shoes'
+    if requested == 'sneakers':
+        return actual in {'sneakers', 'other shoe'} or any(word in text for word in ('sneaker', 'trainer'))
+    if requested == 'boots':
+        return actual in {'boots', 'bootie'} or 'boot' in text
+    if requested == 'heels':
+        return actual in {'heels', 'heeled sandals', 'pumps', 'wedge'} or any(
+            word in text for word in ('heel', 'pump')
+        )
+    if requested == 'dress' and actual in {'underdress', 'underwear body'}:
+        return False
+    return actual == requested or bool(re.search(r'(?<![a-z0-9])' + re.escape(requested) + r'(?![a-z0-9])', text))
+
+
+def _audience_matches(product: Dict[str, Any], audiences: List[str]) -> bool:
+    if not audiences:
+        return True
+    actual = str(product.get('audience') or '').casefold()
+    for audience in audiences:
+        wanted = audience.casefold()
+        if actual == wanted:
+            return True
+        if wanted == 'ladieswear' and ('ladies' in actual or actual == 'divided'):
+            return True
+        if wanted == 'menswear' and ('mens' in actual or actual == 'divided'):
+            return True
+        if wanted.startswith('children') and 'children' in actual:
+            return True
+        if wanted.startswith('baby') and 'baby' in actual:
+            return True
+    return False
+
+
 def retrieve_candidates_for_text(
     index: CatalogIndex,
     query_text: str,
@@ -37,7 +118,8 @@ def retrieve_candidates_for_text(
     budget_max: Optional[float] = None
 ) -> List[Tuple[int, float]]:
     """Retrieve and score candidate product indices for a specific text intent."""
-    raw_tokens = WORD_RE.findall(query_text.lower())
+    lowered_query = query_text.lower()
+    raw_tokens = WORD_RE.findall(lowered_query)
     if not raw_tokens:
         return []
 
@@ -45,12 +127,22 @@ def retrieve_candidates_for_text(
     query_nouns = {t for t in raw_tokens if t in FASHION_NOUNS}
 
     # Identify query-specific colors and types for this sub-intent
-    sub_colors = [c_canon for c_syn, c_canon in COLOR_SYNONYMS.items() if re.search(r'\b' + re.escape(c_syn) + r'\b', query_text.lower())]
-    sub_types = [pt_canon for pt_syn, pt_canon in PRODUCT_TYPE_SYNONYMS.items() if re.search(r'\b' + re.escape(pt_syn) + r'\b', query_text.lower())]
+    corrected = _fuzzy_aliases(lowered_query, {**COLOR_SYNONYMS, **PRODUCT_TYPE_SYNONYMS})
+    recognition_text = lowered_query + (' ' + ' '.join(corrected) if corrected else '')
+    sub_colors = _find_aliases(recognition_text, COLOR_SYNONYMS)
+    sub_types = _find_aliases(recognition_text, PRODUCT_TYPE_SYNONYMS)
+    context_terms = {
+        term.casefold()
+        for concept, terms in CONCEPT_EXPANSIONS.items()
+        if concept in lowered_query
+        for term in terms
+    }
 
     # Collect search tokens
-    all_tokens = list(raw_tokens)
-    for t in parsed_query.expanded_tokens:
+    all_tokens = [t for t in raw_tokens if t not in STOPWORDS and not t.isdigit()]
+    for t in _expanded_query_tokens(query_text):
+        if t in STOPWORDS or t.isdigit():
+            continue
         if t not in all_tokens:
             all_tokens.append(t)
 
@@ -86,7 +178,9 @@ def retrieve_candidates_for_text(
         return []
 
     results: List[Tuple[int, float]] = []
-    effective_max_price = budget_max if budget_max is not None else parsed_query.price_max
+    local_min_price, local_max_price = extract_budget(query_text)
+    effective_min_price = local_min_price if local_min_price is not None else parsed_query.price_min
+    effective_max_price = budget_max if budget_max is not None else (local_max_price if local_max_price is not None else parsed_query.price_max)
 
     for doc_idx, base_score in scores.items():
         if base_score <= 0.05:
@@ -98,9 +192,27 @@ def retrieve_candidates_for_text(
 
         p = index.products[doc_idx]
 
-        # Entity match check: if query specified a fashion noun (e.g. 'top', 'dress'),
-        # product must match at least one requested fashion noun in name, type, or description
-        if query_nouns:
+        if (str(p.get('product_type') or '').casefold() in NON_APPAREL_TYPES and
+                not any(word in lowered_query for word in ('dog', 'toy', 'cushion', 'case', 'waterbottle', 'cosmetic'))):
+            continue
+
+        # Explicit query facets are hard requirements unless the caller gave a
+        # conflicting explicit filter, which has precedence per the contract.
+        if sub_types and 'product_type' not in filters:
+            if not any(_product_type_matches(p, requested, lowered_query) for requested in sub_types):
+                continue
+        if sub_colors and 'color' not in filters:
+            if p.get('color') not in sub_colors:
+                continue
+        if parsed_query.audiences and 'audience' not in filters:
+            if not _audience_matches(p, parsed_query.audiences):
+                continue
+        if context_terms:
+            context_text = ' '.join(str(p.get(k) or '') for k in
+                                    ('name', 'product_type', 'description')).casefold()
+            if not any(term in context_text for term in context_terms):
+                continue
+        if query_nouns and not sub_types:
             doc_text = f"{p.get('name') or ''} {p.get('product_type') or ''} {p.get('description') or ''}".lower()
             doc_tokens = set(WORD_RE.findall(doc_text))
             if not any(qn in doc_tokens for qn in query_nouns):
@@ -111,7 +223,7 @@ def retrieve_candidates_for_text(
         # 1. Product Type Match Bonus
         prod_type = p.get('product_type')
         if prod_type:
-            if prod_type in sub_types:
+            if any(_product_type_matches(p, requested, lowered_query) for requested in sub_types):
                 final_score += 10.0
             elif any(st.lower() in prod_type.lower() for st in sub_types):
                 final_score += 6.0
@@ -121,7 +233,7 @@ def retrieve_candidates_for_text(
         if prod_color and sub_colors:
             if prod_color in sub_colors:
                 final_score += 6.0
-            else:
+            elif 'color' not in filters:
                 final_score -= 3.0
 
         # 3. Audience Match Bonus
@@ -134,7 +246,7 @@ def retrieve_candidates_for_text(
         price = index.prices[doc_idx]
         if effective_max_price is not None and price > effective_max_price:
             continue
-        if parsed_query.price_min is not None and price < parsed_query.price_min:
+        if effective_min_price is not None and price < effective_min_price:
             continue
         if effective_max_price is not None:
             final_score += 2.0
@@ -179,11 +291,13 @@ def search_and_rank(
     ordered_indices: List[int] = []
 
     if parsed_query.intent_type == 'mixed' and len(parsed_query.sub_queries) >= 2:
-        c1_text = parsed_query.sub_queries[0]
-        c2_text = parsed_query.sub_queries[1]
+        ranked_choices = []
+        for choice_text in parsed_query.sub_queries:
+            _, choice_max = extract_budget(choice_text)
+            ranked_choices.append(retrieve_candidates_for_text(index, choice_text, parsed_query, filters, choice_max))
 
-        c1_ranked = retrieve_candidates_for_text(index, c1_text, parsed_query, filters)
-        c2_ranked = retrieve_candidates_for_text(index, c2_text, parsed_query, filters)
+        c1_ranked = ranked_choices[0]
+        c2_ranked = ranked_choices[1]
 
         for doc_idx, s in c1_ranked:
             scores_by_idx[doc_idx] = max(scores_by_idx.get(doc_idx, 0.0), s)
@@ -194,14 +308,12 @@ def search_and_rank(
         c1_list = [doc_idx for doc_idx, _ in c1_ranked]
         c2_list = [doc_idx for doc_idx, _ in c2_ranked]
 
-        max_len = max(len(c1_list), len(c2_list))
+        max_len = max(len(values) for values in (c1_list, c2_list))
         for i in range(max_len):
-            if i < len(c1_list) and c1_list[i] not in seen:
-                ordered_indices.append(c1_list[i])
-                seen.add(c1_list[i])
-            if i < len(c2_list) and c2_list[i] not in seen:
-                ordered_indices.append(c2_list[i])
-                seen.add(c2_list[i])
+            for choice_list in (c1_list, c2_list):
+                if i < len(choice_list) and choice_list[i] not in seen:
+                    ordered_indices.append(choice_list[i])
+                    seen.add(choice_list[i])
     else:
         primary_text = parsed_query.primary_query if parsed_query.primary_query else parsed_query.original_query
         ranked = retrieve_candidates_for_text(index, primary_text, parsed_query, filters)
@@ -221,9 +333,10 @@ def search_and_rank(
     # Pass 2: Sort by requested field
     if sort_by == 'relevance':
         if parsed_query.intent_type == 'mixed':
-            # Preserve interleaved coverage order for relevance desc
-            if not reverse:
-                ordered_indices.reverse()
+            # The round-robin merge is deliberate: it gives each requested
+            # choice a chance in the shared top-k page.  Do not re-sort it by
+            # ID, otherwise mixed coverage silently becomes reverse-ID order.
+            ordered_indices = ordered_indices if reverse else list(reversed(ordered_indices))
         else:
             ordered_indices.sort(key=lambda idx: scores_by_idx[idx], reverse=reverse)
     elif sort_by == 'price':
