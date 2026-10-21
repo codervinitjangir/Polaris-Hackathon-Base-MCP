@@ -34,9 +34,13 @@ async def call_tool(name, arguments):
     return await anyio.to_thread.run_sync(catalog.search, arguments)
 
 
+raw_hosts = [h.strip() for h in os.getenv('MCP_ALLOWED_HOSTS',
+    'localhost:*,127.0.0.1:*,[::1]:*,*').split(',') if h.strip()]
+allow_all = '*' in raw_hosts or os.getenv('MCP_ENABLE_DNS_REBINDING', '0').lower() in ('0', 'false', 'no')
+
 security = TransportSecuritySettings(
-    allowed_hosts=[h.strip() for h in os.getenv('MCP_ALLOWED_HOSTS',
-        'localhost:*,127.0.0.1:*,[::1]:*').split(',') if h.strip()],
+    enable_dns_rebinding_protection=not allow_all,
+    allowed_hosts=raw_hosts,
     allowed_origins=[o.strip() for o in os.getenv('MCP_ALLOWED_ORIGINS', '').split(',') if o.strip()],
 )
 sessions = StreamableHTTPSessionManager(server, json_response=True, stateless=True, security_settings=security)

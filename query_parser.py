@@ -26,7 +26,8 @@ FASHION_NOUNS = {
     'bag', 'bags', 'handbag', 'handbags', 'backpack', 'backpacks', 'tote', 'totes', 'purse', 'clutch',
     'hat', 'hats', 'cap', 'caps', 'beanie', 'beanies', 'scarf', 'scarves', 'belt', 'belts', 'tie', 'ties',
     'swimsuit', 'swimwear', 'bikini', 'pyjama', 'pyjamas', 'pajama', 'pajamas', 'robe', 'robes',
-    'underwear', 'bra', 'bras', 'socks', 'accessories', 'sunglasses', 'earrings', 'necklace'
+    'underwear', 'bra', 'bras', 'socks', 'accessories', 'sunglasses', 'earrings', 'necklace',
+    'towel', 'towels', 'watch', 'watches', 'umbrella', 'wallet', 'wallets', 'blanket', 'cushion'
 }
 
 

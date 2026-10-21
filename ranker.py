@@ -67,6 +67,8 @@ def _product_type_matches(product: Dict[str, Any], requested: str, query_text: s
 
     text = ' '.join(str(product.get(k) or '') for k in ('name', 'product_type', 'description')).casefold()
     if requested == 'trousers':
+        if actual in {'dress', 'underdress', 'skirt'} or product.get('category') == 'Garment Full body':
+            return False
         return actual in {'trousers', 'outdoor trousers'} or any(
             word in text for word in ('jean', 'denim', 'trouser', 'pants', 'chino', 'jogger')
         )
@@ -324,18 +326,18 @@ def search_and_rank(
     if not ordered_indices:
         return []
 
-    # 4. Stable Two-Pass Sorting (Ties in key are broken by ID ascending in either direction)
+    # 4. Stable Two-Pass Sorting
     reverse = (sort_order == 'desc')
 
-    # Pass 1: Base tie-breaker is ALWAYS id ascending
-    ordered_indices.sort(key=lambda idx: index.products[idx]['id'], reverse=False)
+    # Pass 1: Base tie-breaker is ALWAYS id ascending for non-mixed queries
+    if parsed_query.intent_type != 'mixed':
+        ordered_indices.sort(key=lambda idx: index.products[idx]['id'], reverse=False)
 
     # Pass 2: Sort by requested field
     if sort_by == 'relevance':
         if parsed_query.intent_type == 'mixed':
             # The round-robin merge is deliberate: it gives each requested
-            # choice a chance in the shared top-k page.  Do not re-sort it by
-            # ID, otherwise mixed coverage silently becomes reverse-ID order.
+            # choice a chance in the shared top-k page.
             ordered_indices = ordered_indices if reverse else list(reversed(ordered_indices))
         else:
             ordered_indices.sort(key=lambda idx: scores_by_idx[idx], reverse=reverse)

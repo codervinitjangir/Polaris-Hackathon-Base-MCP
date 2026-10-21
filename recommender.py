@@ -49,17 +49,36 @@ def query_audience_compatible(audiences: List[str], candidate_aud: Optional[str]
     return False
 
 
+ACCESSORY_SYNONYMS = {
+    'bag': ['bag', 'shoulder bag', 'cross-body bag', 'tote bag', 'weekend/gym bag', 'bumbag'],
+    'backpack': ['bag', 'backpack', 'tote bag', 'weekend/gym bag'],
+    'heels': ['heels', 'heeled sandals', 'pumps'],
+    'heel': ['heels', 'heeled sandals', 'pumps'],
+    'jewelry': ['necklace', 'earring', 'earrings', 'bracelet'],
+    'jewellery': ['necklace', 'earring', 'earrings', 'bracelet'],
+    'boots': ['boots', 'bootie'],
+    'boot': ['boots', 'bootie'],
+    'sneakers': ['sneakers'],
+    'shoes': ['sneakers', 'flat shoe', 'flat shoes', 'boots', 'other shoe'],
+    'shoe': ['sneakers', 'flat shoe', 'flat shoes', 'boots', 'other shoe'],
+    'slippers': ['slippers', 'flip flop', 'sandals'],
+    'hat': ['hat/beanie', 'cap'],
+    'scarf': ['scarf'],
+    'belt': ['belt'],
+    'sunglasses': ['sunglasses'],
+    'tie': ['tie'],
+}
+
+
 def candidate_indices_for_type(index: CatalogIndex, requested: str) -> Set[int]:
     """Expand broad accessory types to their catalog variants."""
     wanted = requested.casefold()
-    if wanted == 'bag':
-        variants = ('bag', 'shoulder bag', 'cross-body bag', 'tote bag', 'weekend/gym bag', 'bumbag')
+    variants = ACCESSORY_SYNONYMS.get(wanted)
+    if variants:
         result: Set[int] = set()
         for variant in variants:
             result.update(index.attr_sets['product_type'].get(variant, set()))
         return result
-    if wanted == 'sneakers':
-        return set(index.attr_sets['product_type'].get('sneakers', set()))
     return set(index.attr_sets['product_type'].get(wanted, set()))
 
 

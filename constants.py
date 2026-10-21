@@ -205,6 +205,17 @@ PRODUCT_TYPE_SYNONYMS = {
     'ties': 'Tie',
     'bowtie': 'Tie',
     'umbrella': 'Umbrella',
+    'towel': 'Towel',
+    'towels': 'Towel',
+    'legging': 'Trousers',
+    'leggings': 'Trousers',
+    'dress pants': 'Trousers',
+    'pyjama bottom': 'Pyjama bottom',
+    'pyjama bottoms': 'Pyjama bottom',
+    'sports bra': 'Bra',
+    'sports bras': 'Bra',
+    'summer hat': 'Hat/beanie',
+    'summer hats': 'Hat/beanie',
 }
 
 # Audience mapping
